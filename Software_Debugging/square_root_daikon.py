@@ -32,17 +32,16 @@ class Range(object):
         self.set = set()
 
     def track(self, value):
-        if not self.min and not self.max and not self.type:
+        if not self.min and not self.max:
             self.min = value
             self.max = value
-            self.type = type(value)
         elif value > self.max:
             self.max = value
         elif value < self.min:
             self.min = value
         
-        if value not in self.set:
-            self.set.add(value)
+        self.set.add(value)
+        self.type = type(value)
 
     def __repr__(self):
         return '%s %s..%s %s' % (repr(self.type),
@@ -64,30 +63,32 @@ class Invariants:
 
     def track(self, frame, event, arg):
         if event == 'call' or event == 'return':
-            f = frame.f_code.co_name
+            #get the function name
+            func_name = frame.f_code.co_name
             loc_vars = frame.f_locals
+
+            #get the dictionary related to this function
+            dict_func = self.vars.get(func_name)
             
-            if f not in self.vars:
-                self.vars[f] = {}
+            if dict_func is None:
+                dict_func = {}
+                dict_func['call'] = {}
+                dict_func['return'] = {}
+                self.vars[func_name] = dict_func
+
+            if arg is not None:
+                range = dict_func[event].get('ret')
+                if range is None:
+                    range = Range()
+                    dict_func[event]["ret"] = range
+                    range.track(arg)
             
-            if event not in self.vars[f]:
-                self.vars[f][event] = {}
-            
-            if event == 'return':
-                if 'ret' not in self.vars[f][event]:
-                    r = Range()
-                    r.track(arg)
-                    self.vars[f][event]['ret'] = r
-                else:
-                    self.vars[f][event]['ret'].track(arg)
-            else:
-                for var in loc_vars.keys():
-                    if var not in self.vars[f][event]:
-                        r = Range()
-                        r.track(loc_vars[var])
-                        self.vars[f][event][var] = r
-                    else:
-                        self.vars[f][event][var].track(loc_vars[var])
+            for var in loc_vars:
+                range = dict_func[event].get(var)
+                if range is None:
+                    range = Range()
+                    dict_func[event][var] = range
+                range.track(loc_vars[var])
 
     def __repr__(self):
         """Returns the tracked invariants."""
@@ -97,14 +98,22 @@ class Invariants:
                 s += event + ' ' + function + ':\n'
 
                 for var, range in vars.iteritems():
-                    s += '    assert isinstance(' + var + ', type(' + vars[function][event][var] + '))'
+                    s += '    assert isinstance(%s, type(%s))\n' % (var, repr(range.min))
+                    s += '    assert %s in %s\n' % (var, str(range.set))
                     s += '    assert '
                     if range.min == range.max:
-                        s += var + ' == ' + repr(range.min)
+                        s += '%s == %s\n' % (var, repr(range.min))
                     else:
-                        s += repr(range.min) + ' <= ' + var + ' <= ' + repr(range.max)
-                    s += '\n'
-                    s += '    assert ' + var + ' >= ' + var2 + '\n'
+                        s += '%s <= %s <= %s\n' % (repr(range.min), var, repr(range.max))
+                    for var2, range2 in vars.iteritems():
+                        if var2 is not var:
+                            if (range.min == range2.min) and (range.max == range2.max):
+                                op = '=='
+                            if range.min <= range2.min:
+                                op = '<='
+                            else:
+                                op = '>='
+                            s += '    assert %s %s %s\n' % (var, op, var2)
 
         return s
 
@@ -118,13 +127,12 @@ def traceit(frame, event, arg):
 
 sys.settrace(traceit)
 eps = 0.000001
-test_vars = [34.6363, 9.348, -293438.402]
+test_vars = [34.6363, 9.348, -293438.402, 3, 0, -10]
 
 for i in test_vars:
-#for i in range (1, 10):
-#    r = int(random.random() * 1000)
-#    z = square_root(r, eps)
-#    z = square(z)
+    r = int(random.random() * 1000)
+    z = square_root(r, eps)
+    z = square(z)
     z = double(i)
 
 sys.settrace(None)
